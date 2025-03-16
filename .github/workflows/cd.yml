@@ -230,19 +230,18 @@ jobs:
         ansible-vault view ansible/secrets.yml --vault-password-file vault_password_temp.txt > vault_output.yml
         
         # Extract credentials using Python with PyYAML
-        CREDENTIALS=$(python -c "$(cat <<'EOF'
+        CREDENTIALS=$(python -c '
 import yaml
 import sys
 
 # Load YAML from the vault output
-with open('vault_output.yml', 'r') as f:
+with open("vault_output.yml", "r") as f:
     data = yaml.safe_load(f)
 
 # Extract credentials
-creds = data['db_credentials']
-print(f'{creds[\"postgres_user\"]} {creds[\"postgres_password\"]} {creds[\"postgres_db\"]}')
-EOF
-)")
+creds = data["db_credentials"]
+print(f"{creds[\"postgres_user\"]} {creds[\"postgres_password\"]} {creds[\"postgres_db\"]}")
+')
         
         # Parse the credentials
         read -r POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB <<< "$CREDENTIALS"
@@ -387,19 +386,18 @@ EOF
         ansible-vault view ansible/secrets.yml --vault-password-file vault_password_temp.txt > vault_output.yml
         
         # Extract credentials using Python with PyYAML
-        CREDENTIALS=$(python -c "$(cat <<'EOF'
+        CREDENTIALS=$(python -c '
 import yaml
 import sys
 
 # Load YAML from the vault output
-with open('vault_output.yml', 'r') as f:
+with open("vault_output.yml", "r") as f:
     data = yaml.safe_load(f)
 
 # Extract credentials
-creds = data['db_credentials']
-print(f'{creds[\"postgres_user\"]} {creds[\"postgres_password\"]} {creds[\"postgres_db\"]}')
-EOF
-)")
+creds = data["db_credentials"]
+print(f"{creds[\"postgres_user\"]} {creds[\"postgres_password\"]} {creds[\"postgres_db\"]}")
+')
         
         # Parse the credentials
         read -r POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB <<< "$CREDENTIALS"
