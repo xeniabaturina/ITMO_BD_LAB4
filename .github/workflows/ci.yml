@@ -326,8 +326,14 @@ jobs:
         # Create a temporary file with the vault password
         echo "${{ secrets.VAULT_PASSWORD }}" > vault_password_temp.txt
         
-        # Encrypt the secrets file
-        ansible-vault encrypt ansible/secrets.yml --vault-password-file vault_password_temp.txt
+        # Check if the file is already encrypted
+        if grep -q "^\$ANSIBLE_VAULT;" ansible/secrets.yml; then
+          echo "Secrets file is already encrypted, skipping encryption"
+        else
+          # Encrypt the secrets file
+          echo "Encrypting secrets file..."
+          ansible-vault encrypt ansible/secrets.yml --vault-password-file vault_password_temp.txt
+        fi
         
         # Remove the temporary file
         rm vault_password_temp.txt

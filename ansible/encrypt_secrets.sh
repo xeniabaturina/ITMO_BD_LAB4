@@ -24,6 +24,12 @@ if [ -z "$VAULT_PASSWORD" ]; then
     exit 1
 fi
 
+# Check if the file is already encrypted
+if grep -q "^\$ANSIBLE_VAULT;" "$SECRETS_FILE"; then
+    echo "Secrets file is already encrypted, skipping encryption"
+    exit 0
+fi
+
 # Create a temporary file for the vault password
 TEMP_PASSWORD_FILE=$(mktemp)
 echo "$VAULT_PASSWORD" > "$TEMP_PASSWORD_FILE"
