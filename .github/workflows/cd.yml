@@ -34,6 +34,20 @@ jobs:
         fi
         echo "Using Docker image tag: ${{ steps.set_tag.outputs.tag || github.event.inputs.image_tag || 'latest' }}"
         
+    - name: Install Ansible
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ansible
+        
+    - name: Setup Ansible Vault
+      run: |
+        mkdir -p ansible
+        echo "${{ secrets.VAULT_PASSWORD }}" > ansible/vault_password.txt
+        chmod 600 ansible/vault_password.txt
+        
+    - name: Create secrets directory
+      run: mkdir -p secrets
+        
     - name: Download artifacts from CI
       uses: dawidd6/action-download-artifact@v2
       with:
