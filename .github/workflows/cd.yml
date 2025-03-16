@@ -225,14 +225,31 @@ jobs:
         # Extract database credentials from Ansible Vault
         mkdir -p secrets
         echo "${{ secrets.VAULT_PASSWORD }}" > vault_password_temp.txt
-        ansible-vault view ansible/secrets.yml --vault-password-file vault_password_temp.txt > secrets.json
-        rm vault_password_temp.txt
         
-        # Extract credentials
-        POSTGRES_USER=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_user'])")
-        POSTGRES_PASSWORD=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_password'])")
-        POSTGRES_DB=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_db'])")
-        rm secrets.json
+        # View the vault and extract credentials using Python to handle YAML
+        ansible-vault view ansible/secrets.yml --vault-password-file vault_password_temp.txt > vault_output.yml
+        
+        # Extract credentials using Python with PyYAML
+        CREDENTIALS=$(python -c "
+import yaml
+import sys
+
+# Load YAML from the vault output
+with open('vault_output.yml', 'r') as f:
+    data = yaml.safe_load(f)
+
+# Extract credentials
+creds = data['db_credentials']
+print(f'{creds[\"postgres_user\"]} {creds[\"postgres_password\"]} {creds[\"postgres_db\"]}')
+")
+        
+        # Parse the credentials
+        read -r POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB <<< "$CREDENTIALS"
+        
+        # Clean up temporary files
+        rm vault_password_temp.txt vault_output.yml
+        
+        echo "Extracted credentials: POSTGRES_USER=$POSTGRES_USER, POSTGRES_DB=$POSTGRES_DB"
         
         # Run the container
         docker run -d \
@@ -362,17 +379,33 @@ jobs:
         # Create a Docker network for the containers
         docker network create penguin-test-network
 
-        # Extract database credentials from Ansible Vault if not already done
-        if [ ! -f "secrets.json" ]; then
-          echo "${{ secrets.VAULT_PASSWORD }}" > vault_password_temp.txt
-          ansible-vault view ansible/secrets.yml --vault-password-file vault_password_temp.txt > secrets.json
-          rm vault_password_temp.txt
-        fi
+        # Extract database credentials from Ansible Vault
+        echo "${{ secrets.VAULT_PASSWORD }}" > vault_password_temp.txt
         
-        # Extract credentials
-        POSTGRES_USER=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_user'])")
-        POSTGRES_PASSWORD=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_password'])")
-        POSTGRES_DB=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_db'])")
+        # View the vault and extract credentials using Python to handle YAML
+        ansible-vault view ansible/secrets.yml --vault-password-file vault_password_temp.txt > vault_output.yml
+        
+        # Extract credentials using Python with PyYAML
+        CREDENTIALS=$(python -c "
+import yaml
+import sys
+
+# Load YAML from the vault output
+with open('vault_output.yml', 'r') as f:
+    data = yaml.safe_load(f)
+
+# Extract credentials
+creds = data['db_credentials']
+print(f'{creds[\"postgres_user\"]} {creds[\"postgres_password\"]} {creds[\"postgres_db\"]}')
+")
+        
+        # Parse the credentials
+        read -r POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB <<< "$CREDENTIALS"
+        
+        # Clean up temporary files
+        rm vault_password_temp.txt vault_output.yml
+        
+        echo "Extracted credentials: POSTGRES_USER=$POSTGRES_USER, POSTGRES_DB=$POSTGRES_DB"
         
         # Set up PostgreSQL with schemas for both production and testing
         docker run -d --name postgres-db \
@@ -446,9 +479,6 @@ jobs:
         # Disconnect containers from the network before removing it
         docker network disconnect --force penguin-test-network penguin-classifier || true
         docker network rm penguin-test-network || true
-        
-        # Clean up
-        rm -f secrets.json
         
     - name: Generate deployment report
       run: |
