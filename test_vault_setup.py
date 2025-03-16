@@ -12,6 +12,7 @@ import sys
 import subprocess
 import yaml
 import json
+import tempfile
 from pathlib import Path
 
 def run_command(command):
@@ -54,53 +55,65 @@ def test_vault_decryption():
     """Test that the vault can be decrypted"""
     print("\n=== Testing Vault Decryption ===")
     
-    # Get the path to the secrets file and password file
+    # Get the path to the secrets file
     script_dir = Path(__file__).parent
     secrets_file = script_dir / "ansible" / "secrets.yml"
-    password_file = script_dir / "ansible" / "vault_password.txt"
     
-    # Check if the files exist
+    # Check if the file exists
     if not secrets_file.exists():
         print(f"Error: Secrets file not found at {secrets_file}")
         return False
     
-    if not password_file.exists():
-        print(f"Error: Vault password file not found at {password_file}")
+    # Check if VAULT_PASSWORD environment variable is set
+    vault_password = os.environ.get('VAULT_PASSWORD')
+    if not vault_password:
+        print("Error: VAULT_PASSWORD environment variable is not set")
         return False
     
-    # View the secrets file
-    view_result = run_command(f"ansible-vault view {secrets_file} --vault-password-file {password_file}")
-    if view_result is None:
-        print("Error: Failed to decrypt the secrets file")
-        return False
+    # Create a temporary file for the vault password
+    with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
+        temp_file.write(vault_password)
+        temp_file_path = temp_file.name
     
-    # Parse the YAML
     try:
-        secrets = yaml.safe_load(view_result)
-        
-        # Check if the expected keys are present
-        if 'db_credentials' not in secrets:
-            print("Error: 'db_credentials' key not found in secrets")
+        # View the secrets file
+        view_result = run_command(f"ansible-vault view {secrets_file} --vault-password-file {temp_file_path}")
+        if view_result is None:
+            print("Error: Failed to decrypt the secrets file")
             return False
         
-        db_creds = secrets['db_credentials']
-        required_keys = ['postgres_user', 'postgres_password', 'postgres_db', 'postgres_schema']
-        
-        for key in required_keys:
-            if key not in db_creds:
-                print(f"Error: '{key}' not found in db_credentials")
+        # Parse the YAML
+        try:
+            secrets = yaml.safe_load(view_result)
+            
+            # Check if the expected keys are present
+            if 'db_credentials' not in secrets:
+                print("Error: 'db_credentials' key not found in secrets")
                 return False
+            
+            db_creds = secrets['db_credentials']
+            required_keys = ['postgres_user', 'postgres_password', 'postgres_db', 'postgres_schema']
+            
+            for key in required_keys:
+                if key not in db_creds:
+                    print(f"Error: '{key}' not found in db_credentials")
+                    return False
+            
+            # Print the credentials (masked for security)
+            masked_creds = {k: v[:2] + '*****' if k.endswith('password') else v for k, v in db_creds.items()}
+            print(f"Database credentials: {json.dumps(masked_creds, indent=2)}")
+            
+            print("✅ Secrets file can be decrypted and has the correct structure")
+            return True
         
-        # Print the credentials (masked for security)
-        masked_creds = {k: v[:2] + '*****' if k.endswith('password') else v for k, v in db_creds.items()}
-        print(f"Database credentials: {json.dumps(masked_creds, indent=2)}")
-        
-        print("✅ Secrets file can be decrypted and has the correct structure")
-        return True
+        except yaml.YAMLError as e:
+            print(f"Error parsing YAML: {e}")
+            return False
     
-    except yaml.YAMLError as e:
-        print(f"Error parsing YAML: {e}")
-        return False
+    finally:
+        # Remove the temporary file
+        if os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
 
 def test_secrets_manager():
     """Test that the secrets_manager can read the secrets"""
@@ -110,7 +123,11 @@ def test_secrets_manager():
         # Create a temporary environment for testing
         script_dir = Path(__file__).parent
         os.environ['VAULT_FILE_PATH'] = str(script_dir / "ansible" / "secrets.yml")
-        os.environ['VAULT_PASSWORD_FILE'] = str(script_dir / "ansible" / "vault_password.txt")
+        
+        # Check if VAULT_PASSWORD environment variable is set
+        if 'VAULT_PASSWORD' not in os.environ:
+            print("Error: VAULT_PASSWORD environment variable is not set")
+            return False
         
         # Add the current directory to the path
         sys.path.insert(0, str(script_dir))
@@ -147,18 +164,28 @@ def test_ci_secrets_extraction():
     """Test that we can extract secrets for CI/CD"""
     print("\n=== Testing CI Secrets Extraction ===")
     
-    # Get the path to the secrets file and password file
+    # Get the path to the secrets file
     script_dir = Path(__file__).parent
     secrets_file = script_dir / "ansible" / "secrets.yml"
-    password_file = script_dir / "ansible" / "vault_password.txt"
+    
+    # Check if VAULT_PASSWORD environment variable is set
+    vault_password = os.environ.get('VAULT_PASSWORD')
+    if not vault_password:
+        print("Error: VAULT_PASSWORD environment variable is not set")
+        return False
     
     # Create a temporary directory for the secrets
     temp_dir = script_dir / "temp_secrets"
     os.makedirs(temp_dir, exist_ok=True)
     
+    # Create a temporary file for the vault password
+    with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
+        temp_file.write(vault_password)
+        temp_file_path = temp_file.name
+    
     try:
         # View the secrets file
-        view_result = run_command(f"ansible-vault view {secrets_file} --vault-password-file {password_file}")
+        view_result = run_command(f"ansible-vault view {secrets_file} --vault-password-file {temp_file_path}")
         if view_result is None:
             print("Error: Failed to decrypt the secrets file")
             return False
@@ -196,6 +223,10 @@ def test_ci_secrets_extraction():
             return False
     
     finally:
+        # Remove the temporary file
+        if os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+        
         # Clean up the temporary directory
         import shutil
         if temp_dir.exists():
@@ -204,6 +235,12 @@ def test_ci_secrets_extraction():
 def main():
     """Run all tests"""
     print("=== Ansible Vault Setup Tests ===")
+    
+    # Check if VAULT_PASSWORD environment variable is set
+    if 'VAULT_PASSWORD' not in os.environ:
+        print("Error: VAULT_PASSWORD environment variable is not set")
+        print("Please set it with: export VAULT_PASSWORD=your-secure-password")
+        return 1
     
     # Run the tests
     encryption_test = test_vault_encryption()
