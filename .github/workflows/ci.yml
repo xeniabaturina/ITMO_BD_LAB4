@@ -1,0 +1,364 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Generate cache key
+      id: cache-key
+      run: echo "key=pip-${{ hashFiles('requirements.txt') }}-$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+      
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest coverage dvc
+        
+    - name: Create cache directories
+      run: |
+        mkdir -p ~/.cache/pip
+        mkdir -p .dvc/cache
+        
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ steps.cache-key.outputs.key }}
+        restore-keys: |
+          pip-${{ hashFiles('requirements.txt') }}-
+          pip-
+          
+    - name: Generate DVC cache key
+      id: dvc-cache-key
+      run: echo "key=dvc-${{ hashFiles('data.dvc') }}-$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+        
+    - name: Cache DVC data
+      uses: actions/cache@v3
+      with:
+        path: .dvc/cache
+        key: ${{ steps.dvc-cache-key.outputs.key }}
+        restore-keys: |
+          dvc-${{ hashFiles('data.dvc') }}-
+          dvc-
+          
+  data-preparation:
+    needs: setup
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for DVC
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Restore cached dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ needs.setup.outputs.cache-key }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install dvc
+        
+    - name: Setup DVC
+      run: |
+        # Create DVC cache directory
+        mkdir -p .dvc/cache
+        
+        # Skip DVC init if .dvc directory already exists
+        if [ ! -d ".dvc" ]; then
+          dvc init --no-scm
+        else
+          echo "DVC already initialized, skipping init"
+        fi
+        
+        # Configure DagsHub as the remote storage
+        dvc remote modify dagshub url https://dagshub.com/xeniabaturina/ITMO_BD_LAB1.dvc
+        
+        # Set up authentication for DagsHub
+        echo "machine dagshub.com login ${{ secrets.DAGSHUB_USERNAME }} password ${{ secrets.DAGSHUB_TOKEN }}" > ~/.netrc
+        
+        # Try to pull data from DagsHub
+        dvc pull -v || {
+          echo "Failed to pull data from DagsHub, using sample data instead"
+          # For CI/CD testing, we use a sample dataset if DVC pull fails
+          mkdir -p data
+          curl -o data/penguins.csv https://raw.githubusercontent.com/allisonhorst/palmerpenguins/master/inst/extdata/penguins.csv
+        }
+        
+    - name: Create data directories
+      run: |
+        mkdir -p data
+        
+    - name: Verify data files
+      run: |
+        # Check if data files exist
+        if [ ! -f "data/penguins.csv" ]; then
+          echo "Creating sample data for testing..."
+          # Download the Palmer Penguins dataset
+          curl -o data/penguins.csv https://raw.githubusercontent.com/allisonhorst/palmerpenguins/master/inst/extdata/penguins.csv
+        else
+          echo "Data files already exist, skipping download"
+        fi
+        
+    - name: Create config.ini
+      run: |
+        cat > config.ini << EOF
+        [DATA]
+        x_data = data/Penguins_X.csv
+        y_data = data/Penguins_y.csv
+        
+        [SPLIT_DATA]
+        x_train = data/Train_Penguins_X.csv
+        y_train = data/Train_Penguins_y.csv
+        x_test = data/Test_Penguins_X.csv
+        y_test = data/Test_Penguins_y.csv
+        
+        [RANDOM_FOREST]
+        n_estimators = 100
+        max_depth = None
+        min_samples_split = 2
+        min_samples_leaf = 1
+        path = experiments/random_forest.sav
+        EOF
+        
+    - name: Prepare data
+      run: |
+        mkdir -p experiments
+        python -m src.preprocess
+        
+    - name: Upload processed data
+      uses: actions/upload-artifact@v4
+      with:
+        name: processed-data
+        path: |
+          data/
+          config.ini
+          
+  test:
+    needs: [setup, data-preparation]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Restore cached dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ needs.setup.outputs.cache-key }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest coverage
+        
+    - name: Download processed data
+      uses: actions/download-artifact@v4
+      with:
+        name: processed-data
+        
+    - name: Run unit tests
+      run: |
+        echo "Running unit tests..."
+        TESTING=1 python -m pytest src/unit_tests/
+        echo "Note: Integration tests are run in the CD pipeline"
+        
+    - name: Calculate test coverage
+      run: |
+        TESTING=1 python -m coverage run -m pytest src/unit_tests/
+        python -m coverage report
+        python -m coverage html
+        
+    - name: Upload test coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: htmlcov/
+        
+  train-model:
+    needs: [setup, data-preparation]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Restore cached dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ needs.setup.outputs.cache-key }}
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Download processed data
+      uses: actions/download-artifact@v4
+      with:
+        name: processed-data
+        
+    - name: Train model
+      run: |
+        mkdir -p experiments
+        python -m src.train
+        
+    - name: Run functional tests
+      run: |
+        echo "Running smoke tests on the trained model..."
+        python -m src.predict -t smoke
+        
+        echo "Running functional tests on the trained model..."
+        python -m src.predict -t func
+        
+    - name: Upload trained model
+      uses: actions/upload-artifact@v4
+      with:
+        name: trained-model
+        path: |
+          experiments/
+          results/
+          
+  build-and-push:
+    needs: [test, train-model]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download processed data
+      uses: actions/download-artifact@v4
+      with:
+        name: processed-data
+        
+    - name: Download trained model
+      uses: actions/download-artifact@v4
+      with:
+        name: trained-model
+        
+    - name: Download coverage report
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-report
+        path: htmlcov/
+        
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      
+    - name: Login to DockerHub
+      if: github.event_name != 'pull_request'
+      id: docker_login
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        
+    - name: Check Docker login status
+      if: github.event_name != 'pull_request'
+      run: |
+        if [ "${{ steps.docker_login.outcome }}" != "success" ]; then
+          echo "::error::Failed to log in to DockerHub. Please check your DockerHub credentials in GitHub Secrets."
+          exit 1
+        else
+          echo "DOCKER_PUSH=true" >> $GITHUB_ENV
+        fi
+        
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      id: docker_build
+      with:
+        context: .
+        push: ${{ env.DOCKER_PUSH == 'true' && github.event_name != 'pull_request' }}
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:latest,${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${{ github.sha }}
+        
+    - name: Update dev_sec_ops.yml
+      if: env.DOCKER_PUSH == 'true' && github.event_name != 'pull_request'
+      run: |
+        # Get Docker image digest from the build-push-action output
+        DIGEST="${{ steps.docker_build.outputs.digest }}"
+
+        # Get last 5 commit hashes
+        COMMITS=$(git log -5 --pretty=format:"%H %s")
+        
+        # Get test coverage
+        COVERAGE=$(grep -A 1 "TOTAL" htmlcov/index.html | tail -n 1 | grep -o '[0-9]\+%' | head -n 1)
+        
+        # Update dev_sec_ops.yml with the new digest and commits
+        cat > dev_sec_ops.yml << EOF
+        # Docker Image Security Information
+        docker_image:
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier
+          tag: latest
+          digest: $DIGEST
+          build_date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+        # Git Commit Information
+        git_commits:
+          last_5_commits:
+        $(git log -5 --pretty=format:"    - hash: %H%n      author: %an%n      date: %ad%n      message: %s%n" --date=iso)
+          
+        # Test Coverage Information
+        test_coverage:
+          total: $COVERAGE
+          date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+        # Security Scan Information
+        security_scan:
+          status: not_performed
+          date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          vulnerabilities:
+            critical: 0
+            high: 0
+            medium: 0
+            low: 0
+        EOF
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-artifacts
+        path: |
+          experiments/
+          htmlcov/
+          dev_sec_ops.yml

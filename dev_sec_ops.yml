@@ -1,0 +1,49 @@
+---
+# DevSecOps Information
+
+# Docker Image Details
+docker_image:
+  name: penguin-classifier
+  tag: latest
+  digest: sha256:00000000000000000000000000000000000000000000000000000000000000 # Will be updated by CI pipeline
+
+# Git Commit Information
+git_commits:
+  - hash: 00000000
+    message: "Initial commit"
+  - hash: 00000000
+    message: "Project structure setup"
+  - hash: 00000000
+    message: "Added model implementation"
+  - hash: 00000000
+    message: "Added API service"
+  - hash: 00000000
+    message: "Added tests and CI/CD configuration"
+
+# Test Coverage
+test_coverage:
+  total: 0%  # Will be updated by CI pipeline
+  modules:
+    preprocess: 0%
+    train: 0%
+    predict: 0%
+    api: 0%
+
+# Security Scanning Results
+security_scan:
+  status: "not performed"
+  vulnerabilities: []
+
+# Model Information
+model:
+  algorithm: "Random Forest"
+  hyperparameters:
+    n_estimators: 100
+    max_depth: null
+    min_samples_split: 2
+    min_samples_leaf: 1
+  metrics:
+    accuracy: 0.0  # Will be updated after training
+    precision: 0.0
+    recall: 0.0
+    f1: 0.0

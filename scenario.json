@@ -1,0 +1,85 @@
+{
+  "name": "Penguin Classification API Test Scenarios",
+  "description": "Test scenarios for the penguin classification API",
+  "version": "1.0",
+  "scenarios": [
+    {
+      "name": "Health Check Test",
+      "description": "Test the health check endpoint",
+      "endpoint": "/health",
+      "method": "GET",
+      "expected_status": 200,
+      "expected_response": {
+        "status": "healthy",
+        "model_loaded": true
+      }
+    },
+    {
+      "name": "Adelie Prediction Test",
+      "description": "Test prediction for Adelie penguin",
+      "endpoint": "/predict",
+      "method": "POST",
+      "payload": {
+        "island": "Torgersen",
+        "bill_length_mm": 39.1,
+        "bill_depth_mm": 18.7,
+        "flipper_length_mm": 181.0,
+        "body_mass_g": 3750.0,
+        "sex": "male"
+      },
+      "expected_status": 200,
+      "expected_response": {
+        "success": true,
+        "predicted_species": "Adelie"
+      }
+    },
+    {
+      "name": "Gentoo Prediction Test",
+      "description": "Test prediction for Gentoo penguin",
+      "endpoint": "/predict",
+      "method": "POST",
+      "payload": {
+        "island": "Biscoe",
+        "bill_length_mm": 46.5,
+        "bill_depth_mm": 15.2,
+        "flipper_length_mm": 219.0,
+        "body_mass_g": 5200.0,
+        "sex": "female"
+      },
+      "expected_status": 200,
+      "expected_response": {
+        "success": true,
+        "predicted_species": "Gentoo"
+      }
+    },
+    {
+      "name": "Missing Field Test",
+      "description": "Test prediction with missing required field",
+      "endpoint": "/predict",
+      "method": "POST",
+      "payload": {
+        "island": "Torgersen",
+        "bill_depth_mm": 18.7,
+        "flipper_length_mm": 181.0,
+        "body_mass_g": 3750.0,
+        "sex": "male"
+      },
+      "expected_status": 400
+    },
+    {
+      "name": "Invalid Data Type Test",
+      "description": "Test prediction with invalid data type",
+      "endpoint": "/predict",
+      "method": "POST",
+      "payload": {
+        "island": "Torgersen",
+        "bill_length_mm": "invalid",
+        "bill_depth_mm": 18.7,
+        "flipper_length_mm": 181.0,
+        "body_mass_g": 3750.0,
+        "sex": "male"
+      },
+      "expected_status": 400
+    }
+  ]
+}

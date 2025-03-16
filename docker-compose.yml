@@ -1,0 +1,41 @@
+version: '3'
+
+services:
+  penguin-classifier:
+    build: .
+    image: penguin-classifier:latest
+    container_name: penguin-classifier
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./results:/app/results
+      - ./experiments:/app/experiments
+    ports:
+      - "5001:5000"
+    environment:
+      - PYTHONPATH=/app
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_SCHEMA=${POSTGRES_SCHEMA:-public}
+      - TEST_POSTGRES_SCHEMA=${TEST_POSTGRES_SCHEMA:-test}
+    depends_on:
+      - postgres
+    command: python -m src.api
+
+  postgres:
+    image: postgres:15
+    container_name: penguin-classifier-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:

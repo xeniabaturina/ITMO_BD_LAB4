@@ -1,0 +1,448 @@
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy'
+        required: true
+        default: 'latest'
+
+jobs:
+  prepare-deployment:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    outputs:
+      image_tag: ${{ steps.set_tag.outputs.tag }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set Docker image tag
+      id: set_tag
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+        else
+          echo "tag=latest" >> $GITHUB_OUTPUT
+        fi
+        echo "Using Docker image tag: ${{ steps.set_tag.outputs.tag || github.event.inputs.image_tag || 'latest' }}"
+        
+    - name: Download artifacts from CI
+      uses: dawidd6/action-download-artifact@v2
+      with:
+        workflow: ci.yml
+        name: deployment-artifacts
+        path: ./
+        
+    - name: Verify model file
+      run: |
+        mkdir -p experiments
+        if [ -f "experiments/random_forest.sav" ]; then
+          echo "Model file exists and has size: $(du -h experiments/random_forest.sav | cut -f1)"
+        else
+          echo "::error::Model file not found. CI pipeline may not have completed successfully."
+          exit 1
+        fi
+        
+    - name: Create data directories
+      run: |
+        mkdir -p data logs results
+        
+    - name: Create deployment config
+      run: |
+        cat > config.ini << EOF
+        [DATA]
+        x_data = data/Penguins_X.csv
+        y_data = data/Penguins_y.csv
+        
+        [SPLIT_DATA]
+        x_train = data/Train_Penguins_X.csv
+        y_train = data/Train_Penguins_y.csv
+        x_test = data/Test_Penguins_X.csv
+        y_test = data/Test_Penguins_y.csv
+        
+        [RANDOM_FOREST]
+        n_estimators = 100
+        max_depth = None
+        min_samples_split = 2
+        min_samples_leaf = 1
+        path = experiments/random_forest.sav
+        EOF
+        
+    - name: Upload deployment config
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-config
+        path: |
+          config.ini
+          experiments/
+          
+  deploy-and-test:
+    needs: prepare-deployment
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download deployment config
+      uses: actions/download-artifact@v4
+      with:
+        name: deployment-config
+        
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v2
+      
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        
+    - name: Create test data
+      run: |
+        mkdir -p ./data
+        mkdir -p ./logs
+        mkdir -p ./results
+        mkdir -p ./experiments
+        
+        # Download sample data for testing
+        curl -o ./data/penguins.csv https://raw.githubusercontent.com/allisonhorst/palmerpenguins/master/inst/extdata/penguins.csv
+        
+        # Create test directories
+        mkdir -p ./tests
+        
+        # Create test data files if they don't exist
+        if [ ! -f "./tests/test_0.json" ]; then
+          cat > ./tests/test_0.json << EOF
+        {
+          "X": [
+            {
+              "island": "Biscoe",
+              "bill_length_mm": 45.2,
+              "bill_depth_mm": 15.8,
+              "flipper_length_mm": 215.0,
+              "body_mass_g": 5400.0,
+              "sex": "MALE"
+            }
+          ],
+          "y": [
+            {
+              "species": "Gentoo"
+            }
+          ]
+        }
+        EOF
+        fi
+        
+        if [ ! -f "./tests/test_1.json" ]; then
+          cat > ./tests/test_1.json << EOF
+        {
+          "X": [
+            {
+              "island": "Torgersen",
+              "bill_length_mm": 39.1,
+              "bill_depth_mm": 18.7,
+              "flipper_length_mm": 181.0,
+              "body_mass_g": 3750.0,
+              "sex": "MALE"
+            }
+          ],
+          "y": [
+            {
+              "species": "Adelie"
+            }
+          ]
+        }
+        EOF
+        fi
+        
+    - name: Pull Docker image
+      id: docker_pull
+      run: |
+        # List available Docker images to debug
+        echo "Available Docker images:"
+        docker images
+        
+        # Try to authenticate with DockerHub
+        echo "Logging in to DockerHub..."
+        docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+        
+        # List repositories on DockerHub
+        echo "Available repositories on DockerHub for ${{ secrets.DOCKERHUB_USERNAME }}:"
+        curl -s -H "Authorization: JWT ${{ secrets.DOCKERHUB_TOKEN }}" "https://hub.docker.com/v2/repositories/${{ secrets.DOCKERHUB_USERNAME }}/" | jq -r '.results[].name'
+        
+        # Try to pull the image with explicit tag
+        echo "Attempting to pull Docker image: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${{ needs.prepare-deployment.outputs.image_tag }}"
+        if ! docker pull ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${{ needs.prepare-deployment.outputs.image_tag }}; then
+          echo "Failed with specific tag, trying 'latest' tag..."
+          if ! docker pull ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:latest; then
+            echo "::error::Failed to pull Docker image. This could be due to authentication issues or the image not being available."
+            echo "::error::Please check your DockerHub credentials in GitHub Secrets (DOCKERHUB_USERNAME and DOCKERHUB_TOKEN)."
+            echo "::error::If you haven't created a DockerHub repository yet, please create one at https://hub.docker.com/repositories"
+            exit 1
+          else
+            echo "Successfully pulled with 'latest' tag"
+            echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+          fi
+        else
+          echo "Successfully pulled with specific tag"
+          echo "IMAGE_TAG=${{ needs.prepare-deployment.outputs.image_tag }}" >> $GITHUB_ENV
+        fi
+        echo "Pulled Docker image: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${IMAGE_TAG:-${{ needs.prepare-deployment.outputs.image_tag }}}"
+        
+    - name: Deploy container
+      id: deploy_container
+      run: |
+        # Stop any running container with the same name
+        docker stop penguin-classifier || true
+        docker rm penguin-classifier || true
+        
+        # Show the image we're going to use
+        echo "Using Docker image: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${IMAGE_TAG:-${{ needs.prepare-deployment.outputs.image_tag }}}"
+        
+        # Run the container
+        docker run -d \
+          --name penguin-classifier \
+          -p 5000:5000 \
+          -v $(pwd)/data:/app/data \
+          -v $(pwd)/logs:/app/logs \
+          -v $(pwd)/results:/app/results \
+          -v $(pwd)/experiments:/app/experiments \
+          -v $(pwd)/config.ini:/app/config.ini \
+          -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
+          -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+          -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+          -e POSTGRES_HOST=${{ secrets.POSTGRES_HOST || 'localhost' }} \
+          -e POSTGRES_PORT=${{ secrets.POSTGRES_PORT || '5432' }} \
+          ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${IMAGE_TAG:-${{ needs.prepare-deployment.outputs.image_tag }}}
+          
+        echo "Deployed container from image: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${IMAGE_TAG:-${{ needs.prepare-deployment.outputs.image_tag }}}"
+        
+        # Check if container is running and show logs for debugging
+        echo "Container status:"
+        docker ps -a | grep penguin-classifier || true
+        
+        echo "Container logs:"
+        docker logs penguin-classifier || true
+        
+        # Check if container is running
+        if docker ps | grep penguin-classifier; then
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+    - name: Wait for API to be ready
+      run: |
+        echo "Waiting for API to be ready..."
+        
+        # Check container status before waiting
+        echo "Container status before waiting:"
+        docker ps -a | grep penguin-classifier || true
+        
+        # Try to get container IP
+        CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' penguin-classifier)
+        echo "Container IP: $CONTAINER_IP"
+        
+        # Check if port 5000 is open
+        echo "Checking if port 5000 is open:"
+        netstat -tulpn | grep 5000 || true
+        
+        for i in {1..30}; do
+          echo "Attempt $i: Trying to reach health endpoint..."
+          curl -v http://localhost:5000/health || true
+          
+          if curl -s http://localhost:5000/health | grep -q "healthy"; then
+            echo "API is ready!"
+            break
+          fi
+          echo "Waiting... ($i/30)"
+          sleep 2
+          if [ $i -eq 30 ]; then
+            echo "::error::API did not become ready in time"
+            echo "Final container status:"
+            docker ps -a | grep penguin-classifier || true
+            echo "Container logs:"
+            docker logs penguin-classifier || true
+            exit 1
+          fi
+        done
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests pytest pandas numpy
+        
+    - name: Test health endpoint
+      id: health_check
+      run: |
+        HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health)
+        if [ "$HEALTH_STATUS" != "200" ]; then
+          echo "Health check failed with status: $HEALTH_STATUS"
+          echo "::error::Health check failed with status: $HEALTH_STATUS"
+          docker logs penguin-classifier || true
+          exit 1
+        fi
+        echo "Health check passed with status: $HEALTH_STATUS"
+        
+        # Get health check response
+        HEALTH_RESPONSE=$(curl -s http://localhost:5000/health)
+        echo "Health check response: $HEALTH_RESPONSE"
+        
+    - name: Test prediction endpoint with single sample
+      run: |
+        # Create test data for prediction
+        cat > test_data.json << EOF
+        {
+          "island": "Biscoe", 
+          "bill_length_mm": 45.2, 
+          "bill_depth_mm": 15.8, 
+          "flipper_length_mm": 215.0, 
+          "body_mass_g": 5400.0, 
+          "sex": "MALE"
+        }
+        EOF
+        
+        # Test prediction endpoint
+        PREDICTION=$(curl -s -X POST -H "Content-Type: application/json" -d @test_data.json http://localhost:5000/predict)
+        echo "Prediction result: $PREDICTION"
+        
+        # Check if prediction was successful
+        if [[ $PREDICTION == *"success\":true"* ]]; then
+          echo "Prediction endpoint test passed"
+        else
+          echo "Prediction endpoint test failed"
+          docker logs penguin-classifier || true
+          exit 1
+        fi
+        
+    - name: Run integration tests
+      run: |
+        # Create a Docker network for the containers
+        docker network create penguin-test-network
+
+        # Set up PostgreSQL with schemas for both production and testing
+        docker run -d --name postgres-db \
+          --network penguin-test-network \
+          -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
+          -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+          -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+          postgres:15
+          
+        # Connect the penguin-classifier container to the network
+        docker network connect penguin-test-network penguin-classifier
+          
+        # Wait for PostgreSQL to be ready
+        echo "Waiting for PostgreSQL to be ready..."
+        for i in {1..30}; do
+          if docker exec postgres-db pg_isready -h localhost -U ${{ secrets.POSTGRES_USER }}; then
+            echo "PostgreSQL is ready!"
+            break
+          fi
+          echo "Waiting for PostgreSQL... ($i/30)"
+          sleep 2
+          if [ $i -eq 30 ]; then
+            echo "::error::PostgreSQL did not become ready in time"
+            exit 1
+          fi
+        done
+        
+        # Create test schema
+        docker exec postgres-db psql -U ${{ secrets.POSTGRES_USER }} -d ${{ secrets.POSTGRES_DB }} -c "CREATE SCHEMA IF NOT EXISTS test;"
+        docker exec postgres-db psql -U ${{ secrets.POSTGRES_USER }} -d ${{ secrets.POSTGRES_DB }} -c "GRANT ALL ON SCHEMA test TO ${{ secrets.POSTGRES_USER }};"
+        
+        # Install database dependencies
+        pip install psycopg2-binary SQLAlchemy
+        
+        # Copy integration tests to the container
+        docker cp src/integration_tests penguin-classifier:/app/src/
+        
+        # Run database integration tests
+        echo "Running database integration tests..."
+        docker exec -e POSTGRES_HOST=postgres-db \
+                    -e POSTGRES_PORT=5432 \
+                    -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
+                    -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+                    -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+                    -e POSTGRES_SCHEMA=test \
+                    -e PYTHONPATH=/app \
+                    penguin-classifier \
+                    python -m pytest /app/src/integration_tests/test_database.py -v
+                    
+        # Run API integration tests
+        echo "Running API integration tests..."
+        docker exec -e POSTGRES_HOST=postgres-db \
+                    -e POSTGRES_PORT=5432 \
+                    -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
+                    -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+                    -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+                    -e POSTGRES_SCHEMA=test \
+                    -e PYTHONPATH=/app \
+                    -e TESTING=1 \
+                    penguin-classifier \
+                    python -m pytest /app/src/integration_tests/test_api_db.py -v
+        
+        # Run functional tests
+        echo "Running scenario-based tests from scenario.json..."
+        python scenario_test.py
+        
+        # Clean up PostgreSQL container and network
+        docker stop postgres-db
+        docker rm postgres-db
+        
+        # Disconnect containers from the network before removing it
+        docker network disconnect --force penguin-test-network penguin-classifier || true
+        docker network rm penguin-test-network || true
+        
+    - name: Generate deployment report
+      run: |
+        # Create deployment report
+        cat > deployment_report.md << EOF
+        # Deployment Report
+        
+        ## Deployment Status
+        - **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        - **Image Tag:** ${IMAGE_TAG:-${{ needs.prepare-deployment.outputs.image_tag }}}
+        - **Deployment Status:** Success
+        
+        ## Details
+        - **Repository:** ${{ github.repository }}
+        - **Workflow:** ${{ github.workflow }}
+        - **Run ID:** ${{ github.run_id }}
+        - **Triggered By:** ${{ github.event_name == 'workflow_dispatch' && 'Manual Trigger' || 'CI Pipeline' }}
+        
+        ## Container Information
+        \`\`\`
+        $(docker ps -a | grep penguin-classifier)
+        \`\`\`
+        
+        ## API Health
+        \`\`\`
+        $(curl -s http://localhost:5000/health)
+        \`\`\`
+        
+        ## Next Steps
+        - Check the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for detailed logs
+        - Access the API at http://localhost:5000 (if running locally)
+        - Use the /predict endpoint to make predictions
+        EOF
+        
+    - name: Upload deployment report
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-report
+        path: deployment_report.md
