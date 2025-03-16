@@ -100,7 +100,6 @@ results/
 
 # Ansible Vault
 ansible/vault_password.txt
+*vault_password*
 secrets/
-
-# Encrypted secrets are OK to commit, but not the password
-# ansible/secrets.yml
+/tmp

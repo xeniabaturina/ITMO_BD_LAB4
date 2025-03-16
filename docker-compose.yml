@@ -16,8 +16,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - POSTGRES_HOST=postgres
-      # Only non-sensitive configuration is kept in environment variables
-      # Sensitive data is stored in Ansible Vault
+      - VAULT_PASSWORD=${VAULT_PASSWORD}
     depends_on:
       - postgres
     command: python -m src.api
@@ -47,11 +46,15 @@ services:
     volumes:
       - ./ansible:/app/ansible
       - ./secrets:/secrets
+    environment:
+      - VAULT_PASSWORD=${VAULT_PASSWORD}
     command: >
       bash -c "
         mkdir -p /secrets &&
-        ansible-vault view /app/ansible/secrets.yml --vault-password-file /app/ansible/vault_password.txt | 
-        python -c 'import yaml, json, sys, os; data = yaml.safe_load(sys.stdin); creds = data[\"db_credentials\"]; os.makedirs(\"/secrets\", exist_ok=True); [open(f\"/secrets/{k}\", \"w\").write(str(v)) for k, v in creds.items()]; print(\"Created secret files\")'
+        echo \"$VAULT_PASSWORD\" > /tmp/vault_password.txt &&
+        ansible-vault view /app/ansible/secrets.yml --vault-password-file /tmp/vault_password.txt | 
+        python -c 'import yaml, json, sys, os; data = yaml.safe_load(sys.stdin); creds = data[\"db_credentials\"]; os.makedirs(\"/secrets\", exist_ok=True); [open(f\"/secrets/{k}\", \"w\").write(str(v)) for k, v in creds.items()]; print(\"Created secret files\")' &&
+        rm /tmp/vault_password.txt
       "
 
 volumes:

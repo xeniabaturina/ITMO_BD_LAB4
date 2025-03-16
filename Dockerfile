@@ -22,9 +22,6 @@ COPY config.ini /app/config.ini
 # Copy Ansible files
 COPY ansible /app/ansible/
 
-# Encrypt the secrets file during build
-RUN ansible-vault encrypt /app/ansible/secrets.yml --vault-password-file /app/ansible/vault_password.txt
-
 # Copy the rest of the application
 COPY . /app/
 

@@ -2,35 +2,37 @@ import os
 import yaml
 import subprocess
 import logging
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 class SecretsManager:
-    def __init__(self, vault_file_path=None, vault_password_file=None):
+    def __init__(self, vault_file_path=None, vault_password=None):
         """
-        Initialize the SecretsManager with paths to the vault file and password file.
+        Initialize the SecretsManager with path to the vault file and the vault password.
         
         Args:
             vault_file_path: Path to the encrypted Ansible Vault file
-            vault_password_file: Path to the file containing the Ansible Vault password
+            vault_password: The Ansible Vault password (if provided directly)
         """
-        # Default paths if not provided
+        # Default path if not provided
         self.vault_file_path = vault_file_path or os.environ.get(
             'VAULT_FILE_PATH', '/app/ansible/secrets.yml'
         )
-        self.vault_password_file = vault_password_file or os.environ.get(
-            'VAULT_PASSWORD_FILE', '/app/ansible/vault_password.txt'
-        )
         
-        # Ensure the files exist
+        # Get vault password from environment variable or parameter
+        self.vault_password = vault_password or os.environ.get('VAULT_PASSWORD')
+        
+        # Ensure the vault file exists
         if not Path(self.vault_file_path).exists():
             logger.error(f"Vault file not found at {self.vault_file_path}")
             raise FileNotFoundError(f"Vault file not found at {self.vault_file_path}")
         
-        if not Path(self.vault_password_file).exists():
-            logger.error(f"Vault password file not found at {self.vault_password_file}")
-            raise FileNotFoundError(f"Vault password file not found at {self.vault_password_file}")
+        # Ensure we have a vault password
+        if not self.vault_password:
+            logger.error("Vault password not provided and VAULT_PASSWORD environment variable not set")
+            raise ValueError("Vault password not provided and VAULT_PASSWORD environment variable not set")
     
     def get_secrets(self):
         """
@@ -40,21 +42,31 @@ class SecretsManager:
             dict: Dictionary containing the decrypted secrets
         """
         try:
-            # Run ansible-vault to decrypt the file
-            result = subprocess.run(
-                [
-                    'ansible-vault', 'view', 
-                    self.vault_file_path, 
-                    '--vault-password-file', self.vault_password_file
-                ],
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            # Create a temporary file for the vault password
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
+                temp_file.write(self.vault_password)
+                temp_file_path = temp_file.name
             
-            # Parse the YAML output
-            secrets = yaml.safe_load(result.stdout)
-            return secrets
+            try:
+                # Run ansible-vault to decrypt the file
+                result = subprocess.run(
+                    [
+                        'ansible-vault', 'view', 
+                        self.vault_file_path, 
+                        '--vault-password-file', temp_file_path
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                
+                # Parse the YAML output
+                secrets = yaml.safe_load(result.stdout)
+                return secrets
+            finally:
+                # Always remove the temporary file
+                os.unlink(temp_file_path)
+                
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to decrypt vault: {e.stderr}")
             raise RuntimeError(f"Failed to decrypt vault: {e.stderr}")

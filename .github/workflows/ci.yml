@@ -318,13 +318,35 @@ jobs:
           echo "DOCKER_PUSH=true" >> $GITHUB_ENV
         fi
         
+    - name: Prepare Ansible Vault
+      run: |
+        # Install Ansible
+        pip install ansible
+        
+        # Create a temporary file with the vault password
+        echo "${{ secrets.VAULT_PASSWORD }}" > vault_password_temp.txt
+        
+        # Check if the file is already encrypted
+        if grep -q "^\$ANSIBLE_VAULT;" ansible/secrets.yml; then
+          echo "Secrets file is already encrypted, skipping encryption"
+        else
+          # Encrypt the secrets file
+          echo "Encrypting secrets file..."
+          ansible-vault encrypt ansible/secrets.yml --vault-password-file vault_password_temp.txt
+        fi
+        
+        # Remove the temporary file
+        rm vault_password_temp.txt
+        
     - name: Build and push Docker image
       uses: docker/build-push-action@v4
       id: docker_build
       with:
         context: .
         push: ${{ env.DOCKER_PUSH == 'true' && github.event_name != 'pull_request' }}
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:latest,${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${{ github.sha }}
+        tags: ${{ secrets.DOCKERHUB_USERNAME || github.repository_owner }}/penguin-classifier:latest,${{ secrets.DOCKERHUB_USERNAME || github.repository_owner }}/penguin-classifier:${{ github.sha }}
+        build-args: |
+          VAULT_PASSWORD=${{ secrets.VAULT_PASSWORD }}
         
     - name: Update dev_sec_ops.yml
       if: env.DOCKER_PUSH == 'true' && github.event_name != 'pull_request'
