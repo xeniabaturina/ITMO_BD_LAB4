@@ -222,6 +222,18 @@ jobs:
         # Show the image we're going to use
         echo "Using Docker image: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${IMAGE_TAG:-${{ needs.prepare-deployment.outputs.image_tag }}}"
         
+        # Extract database credentials from Ansible Vault
+        mkdir -p secrets
+        echo "${{ secrets.VAULT_PASSWORD }}" > vault_password_temp.txt
+        ansible-vault view ansible/secrets.yml --vault-password-file vault_password_temp.txt > secrets.json
+        rm vault_password_temp.txt
+        
+        # Extract credentials
+        POSTGRES_USER=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_user'])")
+        POSTGRES_PASSWORD=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_password'])")
+        POSTGRES_DB=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_db'])")
+        rm secrets.json
+        
         # Run the container
         docker run -d \
           --name penguin-classifier \
@@ -231,11 +243,12 @@ jobs:
           -v $(pwd)/results:/app/results \
           -v $(pwd)/experiments:/app/experiments \
           -v $(pwd)/config.ini:/app/config.ini \
-          -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
-          -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
-          -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+          -e POSTGRES_USER=$POSTGRES_USER \
+          -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+          -e POSTGRES_DB=$POSTGRES_DB \
           -e POSTGRES_HOST=${{ secrets.POSTGRES_HOST || 'localhost' }} \
           -e POSTGRES_PORT=${{ secrets.POSTGRES_PORT || '5432' }} \
+          -e VAULT_PASSWORD=${{ secrets.VAULT_PASSWORD }} \
           ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${IMAGE_TAG:-${{ needs.prepare-deployment.outputs.image_tag }}}
           
         echo "Deployed container from image: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${IMAGE_TAG:-${{ needs.prepare-deployment.outputs.image_tag }}}"
@@ -349,12 +362,24 @@ jobs:
         # Create a Docker network for the containers
         docker network create penguin-test-network
 
+        # Extract database credentials from Ansible Vault if not already done
+        if [ ! -f "secrets.json" ]; then
+          echo "${{ secrets.VAULT_PASSWORD }}" > vault_password_temp.txt
+          ansible-vault view ansible/secrets.yml --vault-password-file vault_password_temp.txt > secrets.json
+          rm vault_password_temp.txt
+        fi
+        
+        # Extract credentials
+        POSTGRES_USER=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_user'])")
+        POSTGRES_PASSWORD=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_password'])")
+        POSTGRES_DB=$(python -c "import json; print(json.load(open('secrets.json'))['db_credentials']['postgres_db'])")
+        
         # Set up PostgreSQL with schemas for both production and testing
         docker run -d --name postgres-db \
           --network penguin-test-network \
-          -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
-          -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
-          -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+          -e POSTGRES_USER=$POSTGRES_USER \
+          -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+          -e POSTGRES_DB=$POSTGRES_DB \
           postgres:15
           
         # Connect the penguin-classifier container to the network
@@ -363,7 +388,7 @@ jobs:
         # Wait for PostgreSQL to be ready
         echo "Waiting for PostgreSQL to be ready..."
         for i in {1..30}; do
-          if docker exec postgres-db pg_isready -h localhost -U ${{ secrets.POSTGRES_USER }}; then
+          if docker exec postgres-db pg_isready -h localhost -U $POSTGRES_USER; then
             echo "PostgreSQL is ready!"
             break
           fi
@@ -376,8 +401,8 @@ jobs:
         done
         
         # Create test schema
-        docker exec postgres-db psql -U ${{ secrets.POSTGRES_USER }} -d ${{ secrets.POSTGRES_DB }} -c "CREATE SCHEMA IF NOT EXISTS test;"
-        docker exec postgres-db psql -U ${{ secrets.POSTGRES_USER }} -d ${{ secrets.POSTGRES_DB }} -c "GRANT ALL ON SCHEMA test TO ${{ secrets.POSTGRES_USER }};"
+        docker exec postgres-db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "CREATE SCHEMA IF NOT EXISTS test;"
+        docker exec postgres-db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "GRANT ALL ON SCHEMA test TO $POSTGRES_USER;"
         
         # Install database dependencies
         pip install psycopg2-binary SQLAlchemy
@@ -389,9 +414,9 @@ jobs:
         echo "Running database integration tests..."
         docker exec -e POSTGRES_HOST=postgres-db \
                     -e POSTGRES_PORT=5432 \
-                    -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
-                    -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
-                    -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+                    -e POSTGRES_USER=$POSTGRES_USER \
+                    -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+                    -e POSTGRES_DB=$POSTGRES_DB \
                     -e POSTGRES_SCHEMA=test \
                     -e PYTHONPATH=/app \
                     penguin-classifier \
@@ -401,9 +426,9 @@ jobs:
         echo "Running API integration tests..."
         docker exec -e POSTGRES_HOST=postgres-db \
                     -e POSTGRES_PORT=5432 \
-                    -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
-                    -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
-                    -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+                    -e POSTGRES_USER=$POSTGRES_USER \
+                    -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+                    -e POSTGRES_DB=$POSTGRES_DB \
                     -e POSTGRES_SCHEMA=test \
                     -e PYTHONPATH=/app \
                     -e TESTING=1 \
@@ -421,6 +446,9 @@ jobs:
         # Disconnect containers from the network before removing it
         docker network disconnect --force penguin-test-network penguin-classifier || true
         docker network rm penguin-test-network || true
+        
+        # Clean up
+        rm -f secrets.json
         
     - name: Generate deployment report
       run: |
