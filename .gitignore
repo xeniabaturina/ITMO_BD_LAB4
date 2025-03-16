@@ -97,3 +97,10 @@ results/
 
 # Docker
 .dockerignore 
+
+# Ansible Vault
+ansible/vault_password.txt
+secrets/
+
+# Encrypted secrets are OK to commit, but not the password
+# ansible/secrets.yml

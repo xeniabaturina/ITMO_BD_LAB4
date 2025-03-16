@@ -3,17 +3,45 @@ from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
+from .secrets_manager import get_secrets_manager
 
 # Create base class for declarative models
 Base = declarative_base()
 
-# Get database connection details from environment variables
-DB_USER = os.getenv('POSTGRES_USER')
-DB_PASS = os.getenv('POSTGRES_PASSWORD')
-DB_NAME = os.getenv('POSTGRES_DB')
-DB_HOST = os.getenv('POSTGRES_HOST', 'postgres')
-DB_PORT = os.getenv('POSTGRES_PORT', '5432')
-DB_SCHEMA = os.getenv('POSTGRES_SCHEMA', 'public')
+# Get database connection details from secrets manager or environment variables for testing
+if os.environ.get("TESTING") == "1":
+    # Use environment variables for testing
+    DB_USER = os.getenv('POSTGRES_USER')
+    DB_PASS = os.getenv('POSTGRES_PASSWORD')
+    DB_NAME = os.getenv('POSTGRES_DB')
+    DB_HOST = os.getenv('POSTGRES_HOST', 'postgres')
+    DB_PORT = os.getenv('POSTGRES_PORT', '5432')
+    DB_SCHEMA = os.getenv('POSTGRES_SCHEMA', 'public')
+else:
+    # Get credentials from Ansible Vault
+    try:
+        secrets_manager = get_secrets_manager()
+        db_credentials = secrets_manager.get_db_credentials()
+        
+        DB_USER = db_credentials.get('postgres_user')
+        DB_PASS = db_credentials.get('postgres_password')
+        DB_NAME = db_credentials.get('postgres_db')
+        DB_SCHEMA = db_credentials.get('postgres_schema', 'public')
+        
+        # These can still come from environment variables as they're not sensitive
+        DB_HOST = os.getenv('POSTGRES_HOST', 'postgres')
+        DB_PORT = os.getenv('POSTGRES_PORT', '5432')
+    except Exception as e:
+        # Log the error and fall back to environment variables
+        print(f"Error retrieving secrets from vault: {e}")
+        print("Falling back to environment variables")
+        
+        DB_USER = os.getenv('POSTGRES_USER')
+        DB_PASS = os.getenv('POSTGRES_PASSWORD')
+        DB_NAME = os.getenv('POSTGRES_DB')
+        DB_HOST = os.getenv('POSTGRES_HOST', 'postgres')
+        DB_PORT = os.getenv('POSTGRES_PORT', '5432')
+        DB_SCHEMA = os.getenv('POSTGRES_SCHEMA', 'public')
 
 # Create database URL
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"

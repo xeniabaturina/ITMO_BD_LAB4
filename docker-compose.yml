@@ -10,16 +10,14 @@ services:
       - ./logs:/app/logs
       - ./results:/app/results
       - ./experiments:/app/experiments
+      - ./ansible:/app/ansible
     ports:
       - "5001:5000"
     environment:
       - PYTHONPATH=/app
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_HOST=postgres
-      - POSTGRES_SCHEMA=${POSTGRES_SCHEMA:-public}
-      - TEST_POSTGRES_SCHEMA=${TEST_POSTGRES_SCHEMA:-test}
+      # Only non-sensitive configuration is kept in environment variables
+      # Sensitive data is stored in Ansible Vault
     depends_on:
       - postgres
     command: python -m src.api
@@ -28,14 +26,33 @@ services:
     image: postgres:15
     container_name: penguin-classifier-db
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
+      # These environment variables are set at runtime from the Ansible Vault
+      # by the entrypoint script in the penguin-classifier container
+      - POSTGRES_USER_FILE=/run/secrets/postgres_user
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+      - POSTGRES_DB_FILE=/run/secrets/postgres_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql
+      - ./secrets:/run/secrets
     ports:
       - "5432:5432"
+    depends_on:
+      - secrets-init
+
+  secrets-init:
+    build: .
+    image: penguin-classifier:latest
+    container_name: secrets-init
+    volumes:
+      - ./ansible:/app/ansible
+      - ./secrets:/secrets
+    command: >
+      bash -c "
+        mkdir -p /secrets &&
+        ansible-vault view /app/ansible/secrets.yml --vault-password-file /app/ansible/vault_password.txt | 
+        python -c 'import yaml, json, sys, os; data = yaml.safe_load(sys.stdin); creds = data[\"db_credentials\"]; os.makedirs(\"/secrets\", exist_ok=True); [open(f\"/secrets/{k}\", \"w\").write(str(v)) for k, v in creds.items()]; print(\"Created secret files\")'
+      "
 
 volumes:
   postgres_data:
