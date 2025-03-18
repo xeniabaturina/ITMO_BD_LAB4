@@ -28,27 +28,24 @@ services:
     container_name: secrets-init
     volumes:
       - ./ansible:/app/ansible
-      - ./secrets:/secrets
+      - ./.env.db:/app/.env.db
     environment:
       - VAULT_PASSWORD=${VAULT_PASSWORD}
-      - SECRETS_DIR=./secrets
     command: >
       bash -c "
-        mkdir -p /secrets &&
         echo \"$VAULT_PASSWORD\" > /tmp/vault_password.txt &&
-        ansible-vault view /app/ansible/secrets.yml --vault-password-file /tmp/vault_password.txt | 
-        python -c 'import yaml, json, sys, os; data = yaml.safe_load(sys.stdin); creds = data[\"db_credentials\"]; os.makedirs(\"/secrets\", exist_ok=True); [open(f\"/secrets/{k}\", \"w\").write(str(v)) for k, v in creds.items()]; print(\"Created secret files\")' &&
-        rm /tmp/vault_password.txt
+        export POSTGRES_USER=$(ansible-vault view /app/ansible/secrets.yml --vault-password-file /tmp/vault_password.txt | python3 -c 'import yaml, sys; print(yaml.safe_load(sys.stdin)[\"db_credentials\"][\"postgres_user\"])') &&
+        export POSTGRES_PASSWORD=$(ansible-vault view /app/ansible/secrets.yml --vault-password-file /tmp/vault_password.txt | python3 -c 'import yaml, sys; print(yaml.safe_load(sys.stdin)[\"db_credentials\"][\"postgres_password\"])') &&
+        export POSTGRES_DB=$(ansible-vault view /app/ansible/secrets.yml --vault-password-file /tmp/vault_password.txt | python3 -c 'import yaml, sys; print(yaml.safe_load(sys.stdin)[\"db_credentials\"][\"postgres_db\"])') &&
+        rm /tmp/vault_password.txt &&
+        printenv > /app/.env.db
       "
 
   postgres:
     image: postgres:15
     container_name: penguin-classifier-db
-    environment:
-      # Use environment variables directly instead of files
-      - POSTGRES_USER=${POSTGRES_USER:-penguin_user}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-penguin_pass}
-      - POSTGRES_DB=${POSTGRES_DB:-penguin_classifier}
+    env_file:
+      - ./.env.db
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql
