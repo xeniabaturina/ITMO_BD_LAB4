@@ -7,7 +7,6 @@ import json
 import datetime
 from flask import Flask, request, jsonify, g
 from pathlib import Path
-from contextlib import contextmanager
 
 from .logger import Logger
 from .database import init_db, get_db, save_prediction, PredictionResult
@@ -20,6 +19,7 @@ log = logger.get_logger(__name__)
 # Initialize database on first request
 db_initialized = False
 
+
 def get_db_connection():
     global db_initialized
     if not db_initialized:
@@ -27,9 +27,10 @@ def get_db_connection():
         db_initialized = True
     return next(get_db())
 
+
 @app.teardown_appcontext
 def close_db(e=None):
-    db = g.pop('db', None)
+    db = g.pop("db", None)
     if db is not None:
         db.close()
 
@@ -200,7 +201,7 @@ def health_check():
             get_db_connection()
         except Exception as e:
             db_status = f"error: {str(e)}"
-            
+
         # Check if model is loaded
         model_loaded = model_service.model is not None
 
@@ -317,15 +318,15 @@ def get_predictions():
             log.info("Getting database connection...")
             db = get_db_connection()
             log.info("Database connection established")
-            
+
             # Get predictions ordered by timestamp
             log.info("Querying database...")
-            
+
             # Safety check - use a very small limit for testing
             if os.environ.get("TESTING") == "1":
                 log.info("In testing mode, using small limit")
                 limit = min(limit, 5)  # Use a small limit in testing mode
-                
+
             results = (
                 db.query(PredictionResult)
                 .order_by(PredictionResult.timestamp.desc())

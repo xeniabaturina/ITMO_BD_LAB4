@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from src.database import Base, PredictionResult
 
-# Test database configuration - using the same database but different schema
+# Test database configuration
 TEST_DB_USER = os.getenv("POSTGRES_USER")
 TEST_DB_PASS = os.getenv("POSTGRES_PASSWORD")
 TEST_DB_NAME = os.getenv("POSTGRES_DB")
@@ -21,24 +21,24 @@ def test_db():
     """Create a test database and tables"""
     # Set the schema in the environment variable
     os.environ["POSTGRES_SCHEMA"] = TEST_DB_SCHEMA
-    
+
     # Determine if we should use SQLite or PostgreSQL
     use_sqlite = os.environ.get("TESTING") == "1"
-    
+
     if use_sqlite:
         # Use SQLite in-memory database for tests
         engine = create_engine("sqlite:///:memory:")
     else:
         # Use PostgreSQL with schema for tests
         engine = create_engine(TEST_DATABASE_URL)
-        
+
         # Set the schema for PostgreSQL
         @event.listens_for(engine, "connect")
         def set_search_path(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute(f"SET search_path TO {TEST_DB_SCHEMA}")
             cursor.close()
-            
+
         # Create schema if it doesn't exist
         with engine.connect() as conn:
             conn.execute(f"CREATE SCHEMA IF NOT EXISTS {TEST_DB_SCHEMA}")
