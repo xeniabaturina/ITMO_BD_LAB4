@@ -5,8 +5,5 @@ CREATE SCHEMA IF NOT EXISTS public;
 CREATE SCHEMA IF NOT EXISTS test;
 
 -- Set permissions
-GRANT ALL ON SCHEMA public TO current_user;
-GRANT ALL ON SCHEMA test TO current_user;
-
--- Set search path to include both schemas
-ALTER DATABASE CURRENT_USER SET search_path TO public, test;
+GRANT ALL ON SCHEMA public TO PUBLIC;
+GRANT ALL ON SCHEMA test TO PUBLIC;

@@ -1,58 +1,52 @@
-version: '3'
+version: '3.8'
 
 services:
   penguin-classifier:
     build: .
     image: penguin-classifier:latest
     container_name: penguin-classifier
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./results:/app/results
       - ./experiments:/app/experiments
-      - ./ansible:/app/ansible
+      - ./ansible:/app/ansible:ro
     ports:
       - "5001:5000"
     environment:
       - PYTHONPATH=/app
       - POSTGRES_HOST=postgres
       - VAULT_PASSWORD=${VAULT_PASSWORD}
+      - VAULT_FILE_PATH=/app/ansible/secrets.yml
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     command: python -m src.api
-
-  # Run the secrets-init container first to extract secrets
-  secrets-init:
-    build: .
-    image: penguin-classifier:latest
-    container_name: secrets-init
-    volumes:
-      - ./ansible:/app/ansible
-      - ./.env.db:/app/.env.db
-    environment:
-      - VAULT_PASSWORD=${VAULT_PASSWORD}
-    command: >
-      bash -c "
-        echo \"$VAULT_PASSWORD\" > /tmp/vault_password.txt &&
-        export POSTGRES_USER=$(ansible-vault view /app/ansible/secrets.yml --vault-password-file /tmp/vault_password.txt | python3 -c 'import yaml, sys; print(yaml.safe_load(sys.stdin)[\"db_credentials\"][\"postgres_user\"])') &&
-        export POSTGRES_PASSWORD=$(ansible-vault view /app/ansible/secrets.yml --vault-password-file /tmp/vault_password.txt | python3 -c 'import yaml, sys; print(yaml.safe_load(sys.stdin)[\"db_credentials\"][\"postgres_password\"])') &&
-        export POSTGRES_DB=$(ansible-vault view /app/ansible/secrets.yml --vault-password-file /tmp/vault_password.txt | python3 -c 'import yaml, sys; print(yaml.safe_load(sys.stdin)[\"db_credentials\"][\"postgres_db\"])') &&
-        rm /tmp/vault_password.txt &&
-        printenv > /app/.env.db
-      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   postgres:
     image: postgres:15
     container_name: penguin-classifier-db
     env_file:
-      - ./.env.db
+      - .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql
     ports:
       - "5432:5432"
-    depends_on:
-      - secrets-init
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-penguin_user} -d ${POSTGRES_DB:-penguin_classifier}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:
