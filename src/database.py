@@ -130,4 +130,5 @@ def save_prediction(
     )
     db.add(prediction)
     db.commit()
-    return prediction
+    db.refresh(prediction)
+    return prediction.id

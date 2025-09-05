@@ -154,6 +154,31 @@ class SecretsManager:
         secrets = self.get_secrets()
         return secrets.get("db_credentials", {})
 
+    def get_kafka_config(self):
+        """
+        Get Kafka configuration from the vault.
+
+        Returns:
+            dict: Dictionary containing Kafka configuration
+        """
+        secrets = self.get_secrets()
+        kafka_config = secrets.get("kafka_config", {})
+        
+        # Set defaults if not present in vault
+        default_config = {
+            "bootstrap_servers": "kafka:29092",
+            "topic_name": "penguin-predictions",
+            "group_id": "penguin-classifier-consumer-group",
+            "security_protocol": "PLAINTEXT"
+        }
+        
+        # Merge with defaults
+        for key, value in default_config.items():
+            if key not in kafka_config:
+                kafka_config[key] = value
+                
+        return kafka_config
+
 
 # Singleton instance for application-wide use
 _secrets_manager = None
