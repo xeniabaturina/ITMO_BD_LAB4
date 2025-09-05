@@ -470,6 +470,10 @@ jobs:
         echo "Running scenario-based tests from scenario.json..."
         python scenario_test.py
         
+        # Run Kafka integration tests
+        echo "Running Kafka integration tests..."
+        python test_kafka_integration.py --url http://localhost:5000
+        
         # Clean up PostgreSQL container and network
         docker stop postgres-db
         docker rm postgres-db

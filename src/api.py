@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .logger import Logger
 from .database import init_db, get_db, save_prediction, PredictionResult
+from .kafka_producer import KafkaProducerService
 
 SHOW_LOG = True
 app = Flask(__name__)
@@ -51,6 +52,9 @@ class ModelService:
 
         self.project_path = str(self.root_dir / "experiments")
         self.model_path = str(Path(self.project_path) / "random_forest.sav")
+
+        # Initialize Kafka producer
+        self.kafka_producer = KafkaProducerService()
 
         try:
             with open(self.model_path, "rb") as f:
@@ -94,9 +98,10 @@ class ModelService:
             confidence = prob_dict[species]
 
             # Store prediction in database
+            prediction_id = None
             try:
                 db = get_db_connection()
-                save_prediction(
+                prediction_id = save_prediction(
                     db=db,
                     culmen_length_mm=data["bill_length_mm"],
                     culmen_depth_mm=data["bill_depth_mm"],
@@ -105,14 +110,39 @@ class ModelService:
                     predicted_species=species,
                     confidence=confidence,
                 )
+                log.info(f"Prediction saved to database with ID: {prediction_id}")
             except Exception as e:
                 log.error(f"Error saving prediction to database: {e}")
                 # Continue with prediction even if database save fails
+
+            # Send prediction result to Kafka
+            if prediction_id:
+                try:
+                    prediction_data = {
+                        'id': prediction_id,
+                        'culmen_length_mm': data["bill_length_mm"],
+                        'culmen_depth_mm': data["bill_depth_mm"],
+                        'flipper_length_mm': data["flipper_length_mm"],
+                        'body_mass_g': data["body_mass_g"],
+                        'predicted_species': species,
+                        'confidence': confidence,
+                        'probabilities': prob_dict
+                    }
+                    
+                    kafka_success = self.kafka_producer.send_prediction_result(prediction_data)
+                    if kafka_success:
+                        log.info(f"Prediction {prediction_id} sent to Kafka successfully")
+                    else:
+                        log.error(f"Failed to send prediction {prediction_id} to Kafka")
+                except Exception as e:
+                    log.error(f"Error sending prediction to Kafka: {e}")
+                    # Continue even if Kafka send fails
 
             return {
                 "success": True,
                 "predicted_species": species,
                 "probabilities": prob_dict,
+                "prediction_id": prediction_id,
             }
 
         except ValueError as e:
@@ -205,12 +235,16 @@ def health_check():
         # Check if model is loaded
         model_loaded = model_service.model is not None
 
+        # Check Kafka producer status
+        kafka_status = "connected" if model_service.kafka_producer.producer else "disconnected"
+
         # Return health status
         return jsonify(
             {
                 "status": "healthy",
                 "model_loaded": model_loaded,
                 "database": db_status,
+                "kafka": kafka_status,
                 "timestamp": datetime.datetime.now().isoformat(),
             }
         )

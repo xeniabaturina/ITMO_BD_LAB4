@@ -13,3 +13,5 @@ SQLAlchemy>=1.4.23,<2.0.0
 PyYAML>=6.0.0,<7.0.0
 ansible>=6.0.0,<8.0.0
 cryptography>=3.4.8
+kafka-python>=2.0.2,<2.1.0
+confluent-kafka>=2.3.0,<2.4.0

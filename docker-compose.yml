@@ -1,6 +1,94 @@
 version: '3.8'
 
 services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  kafka-producer:
+    build: .
+    image: penguin-classifier:latest
+    container_name: kafka-producer
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./results:/app/results
+      - ./experiments:/app/experiments
+      - ./ansible:/app/ansible:ro
+    environment:
+      - PYTHONPATH=/app
+      - POSTGRES_HOST=postgres
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - VAULT_PASSWORD=${VAULT_PASSWORD}
+      - VAULT_FILE_PATH=/app/ansible/secrets.yml
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: python -m src.kafka_producer
+    restart: unless-stopped
+
+  kafka-consumer:
+    build: .
+    image: penguin-classifier:latest
+    container_name: kafka-consumer
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./results:/app/results
+      - ./experiments:/app/experiments
+      - ./ansible:/app/ansible:ro
+    environment:
+      - PYTHONPATH=/app
+      - POSTGRES_HOST=postgres
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - VAULT_PASSWORD=${VAULT_PASSWORD}
+      - VAULT_FILE_PATH=/app/ansible/secrets.yml
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: python -m src.kafka_consumer
+    restart: unless-stopped
+
   penguin-classifier:
     build: .
     image: penguin-classifier:latest
@@ -18,10 +106,13 @@ services:
     environment:
       - PYTHONPATH=/app
       - POSTGRES_HOST=postgres
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - VAULT_PASSWORD=${VAULT_PASSWORD}
       - VAULT_FILE_PATH=/app/ansible/secrets.yml
     depends_on:
       postgres:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     command: python -m src.api
     restart: unless-stopped
