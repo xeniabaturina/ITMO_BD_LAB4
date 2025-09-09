@@ -7,6 +7,7 @@ import os
 import json
 import time
 import traceback
+import configparser
 from datetime import datetime
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
@@ -26,17 +27,21 @@ class KafkaProducerService:
     """
 
     def __init__(self):
-        # Get Kafka configuration from secrets manager or environment
-        try:
-            secrets_manager = get_secrets_manager()
-            kafka_config = secrets_manager.get_kafka_config()
-            self.bootstrap_servers = kafka_config.get('bootstrap_servers', 'localhost:9092')
-            self.topic_name = kafka_config.get('topic_name', 'penguin-predictions')
-        except Exception as e:
-            log.warning(f"Could not get Kafka config from secrets manager: {e}")
-            log.warning("Falling back to environment variables")
-            self.bootstrap_servers = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-            self.topic_name = os.environ.get('KAFKA_TOPIC_NAME', 'penguin-predictions')
+        # Load Kafka configuration from config file
+        self.config = configparser.ConfigParser()
+        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.ini')
+        self.config.read(config_path)
+        
+        # Get Kafka configuration from config file with environment variable overrides
+        kafka_config = self.config['KAFKA']
+        self.bootstrap_servers = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', kafka_config.get('bootstrap_servers'))
+        self.topic_name = os.environ.get('KAFKA_TOPIC_NAME', kafka_config.get('topic_name'))
+        
+        # Validate required configuration
+        if not self.bootstrap_servers or not self.topic_name:
+            raise ValueError("Missing required Kafka configuration")
+            
+        log.info(f"Kafka configuration loaded: servers={self.bootstrap_servers}, topic={self.topic_name}")
         
         self.producer = None
         self._initialize_producer()

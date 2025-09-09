@@ -7,6 +7,7 @@ import os
 import json
 import time
 import traceback
+import configparser
 from datetime import datetime
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
@@ -26,19 +27,29 @@ class KafkaConsumerService:
     """
 
     def __init__(self):
-        # Get Kafka configuration from secrets manager or environment
-        try:
-            secrets_manager = get_secrets_manager()
-            kafka_config = secrets_manager.get_kafka_config()
-            self.bootstrap_servers = kafka_config.get('bootstrap_servers', 'localhost:9092')
-            self.topic_name = kafka_config.get('topic_name', 'penguin-predictions')
-            self.group_id = kafka_config.get('group_id', 'penguin-classifier-consumer-group')
-        except Exception as e:
-            log.warning(f"Could not get Kafka config from secrets manager: {e}")
-            log.warning("Falling back to environment variables")
-            self.bootstrap_servers = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-            self.topic_name = os.environ.get('KAFKA_TOPIC_NAME', 'penguin-predictions')
-            self.group_id = os.environ.get('KAFKA_GROUP_ID', 'penguin-classifier-consumer-group')
+        # Load Kafka configuration from config file
+        self.config = configparser.ConfigParser()
+        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.ini')
+        self.config.read(config_path)
+        
+        # Get Kafka configuration from config file with environment variable overrides
+        kafka_config = self.config['KAFKA']
+        self.bootstrap_servers = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', kafka_config.get('bootstrap_servers'))
+        self.topic_name = os.environ.get('KAFKA_TOPIC_NAME', kafka_config.get('topic_name'))
+        self.group_id = os.environ.get('KAFKA_GROUP_ID', kafka_config.get('group_id'))
+        
+        # Additional consumer configuration from config file
+        self.auto_offset_reset = kafka_config.get('auto_offset_reset', 'earliest')
+        self.enable_auto_commit = kafka_config.getboolean('enable_auto_commit', True)
+        self.auto_commit_interval_ms = kafka_config.getint('auto_commit_interval_ms', 1000)
+        self.session_timeout_ms = kafka_config.getint('session_timeout_ms', 30000)
+        self.heartbeat_interval_ms = kafka_config.getint('heartbeat_interval_ms', 10000)
+        
+        # Validate required configuration
+        if not self.bootstrap_servers or not self.topic_name or not self.group_id:
+            raise ValueError("Missing required Kafka configuration")
+            
+        log.info(f"Kafka configuration loaded: servers={self.bootstrap_servers}, topic={self.topic_name}, group={self.group_id}")
         
         self.consumer = None
         self._initialize_consumer()
@@ -52,11 +63,11 @@ class KafkaConsumerService:
                 group_id=self.group_id,
                 value_deserializer=lambda m: json.loads(m.decode('utf-8')),
                 key_deserializer=lambda k: k.decode('utf-8') if k else None,
-                auto_offset_reset='earliest',
-                enable_auto_commit=True,
-                auto_commit_interval_ms=1000,
-                session_timeout_ms=30000,
-                heartbeat_interval_ms=10000,
+                auto_offset_reset=self.auto_offset_reset,
+                enable_auto_commit=self.enable_auto_commit,
+                auto_commit_interval_ms=self.auto_commit_interval_ms,
+                session_timeout_ms=self.session_timeout_ms,
+                heartbeat_interval_ms=self.heartbeat_interval_ms,
                 api_version=(0, 10, 1)
             )
             log.info(f"Kafka consumer initialized with servers: {self.bootstrap_servers}")
