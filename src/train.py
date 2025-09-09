@@ -202,7 +202,6 @@ class PenguinClassifier:
             self.log.info(f"Model saved to {self.model_path}")
 
             # Update config with model path
-            # Access the RandomForestClassifier from the pipeline
             classifier = model.named_steps['classifier']
             self.config["RANDOM_FOREST"] = {
                 "n_estimators": str(classifier.n_estimators),
