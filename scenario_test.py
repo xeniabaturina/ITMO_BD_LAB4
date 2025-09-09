@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 class ScenarioTester:
-    def __init__(self, base_url="http://localhost:5000"):
+    def __init__(self, base_url="http://localhost:5001"):
         self.base_url = base_url
         self.results = []
         
@@ -181,8 +181,8 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Run scenario-based tests for Penguin Classifier API')
-    parser.add_argument('--url', default='http://localhost:5000', 
-                       help='Base URL for the API (default: http://localhost:5000)')
+    parser.add_argument('--url', default='http://localhost:5001', 
+                       help='Base URL for the API (default: http://localhost:5001)')
     parser.add_argument('--scenario-file', default='scenario.json',
                        help='Path to scenario JSON file (default: scenario.json)')
     parser.add_argument('--report', default='scenario_test_report.json',
