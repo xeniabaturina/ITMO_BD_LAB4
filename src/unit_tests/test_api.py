@@ -13,8 +13,8 @@ os.environ["TESTING"] = "1"
 # Mock the database functions before importing the API module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import with database mocking
-with patch("src.database.init_db"), patch("src.database.get_db"):
+# Import with database and Kafka mocking
+with patch("src.database.init_db"), patch("src.database.get_db"), patch("src.kafka_producer.KafkaProducerService"):
     import src.api
     from src.api import ModelService
 
@@ -76,7 +76,8 @@ class TestAPI(unittest.TestCase):
 
     @patch("src.api.Path")
     @patch("src.api.configparser.ConfigParser.read")
-    def test_model_service_init(self, mock_read, mock_path):
+    @patch("src.kafka_producer.KafkaProducerService")
+    def test_model_service_init(self, mock_kafka, mock_read, mock_path):
         """Test ModelService initialization."""
         # Mock the Path to return our test directory
         mock_path_instance = MagicMock()
@@ -108,7 +109,8 @@ class TestAPI(unittest.TestCase):
                 service.model, "Model should be None for nonexistent file"
             )
 
-    def test_predict(self):
+    @patch("src.kafka_producer.KafkaProducerService")
+    def test_predict(self, mock_kafka):
         """Test the ModelService.predict method."""
         # Create a ModelService instance
         service = ModelService()
@@ -125,7 +127,8 @@ class TestAPI(unittest.TestCase):
         self.assertIn("probabilities", result)
 
     @patch("src.api.ModelService")
-    def test_health_check_endpoint(self, mock_service_class):
+    @patch("src.kafka_producer.KafkaProducerService")
+    def test_health_check_endpoint(self, mock_kafka, mock_service_class):
         """Test the health check endpoint."""
         # Mock the model service to have a model loaded
         mock_service_instance = MagicMock()
@@ -149,8 +152,9 @@ class TestAPI(unittest.TestCase):
     @patch("src.api.ModelService.predict")
     @patch("src.api.log_request")
     @patch("src.api.save_prediction")
+    @patch("src.kafka_producer.KafkaProducerService")
     def test_predict_endpoint(
-        self, mock_save_prediction, mock_log_request, mock_predict
+        self, mock_kafka, mock_save_prediction, mock_log_request, mock_predict
     ):
         """Test the prediction endpoint."""
         # Create a real dictionary for the prediction result
