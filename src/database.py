@@ -4,6 +4,11 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from .secrets_manager import get_secrets_manager
+from .logger import Logger
+
+SHOW_LOG = True
+logger = Logger(SHOW_LOG)
+log = logger.get_logger(__name__)
 
 # Create base class for declarative models
 Base = declarative_base()
@@ -94,8 +99,16 @@ def init_db():
     # Create session factory
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-    # Create tables
-    Base.metadata.create_all(bind=engine)
+    # Create tables (if they don't exist)
+    try:
+        Base.metadata.create_all(bind=engine)
+        log.info("Database tables created successfully")
+    except Exception as e:
+        if "already exists" in str(e) or "duplicate" in str(e).lower():
+            log.info("Database tables already exist")
+        else:
+            log.error(f"Error creating database tables: {e}")
+            raise
 
 
 def get_db():

@@ -7,6 +7,8 @@ import shutil
 import configparser
 from unittest.mock import patch, MagicMock
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from pathlib import Path
 
 # Add the parent directory to the path to import modules
@@ -221,18 +223,13 @@ class TestTraining(unittest.TestCase):
             # Add root_dir attribute which is needed by save_model
             classifier.root_dir = Path(self.test_dir)
 
-            # Create a simple model to save
-            model = RandomForestClassifier(n_estimators=10)
+            # Create a Pipeline model (consistent with training code)
+            rf_classifier = RandomForestClassifier(n_estimators=10, max_depth=None, min_samples_split=2, min_samples_leaf=1)
+            model = Pipeline(steps=[("preprocessor", StandardScaler()), ("classifier", rf_classifier)])
             model.fit(
                 self.X_train.select_dtypes(include=[np.number]),
                 self.y_train.values.ravel(),
             )
-
-            # Add attributes needed for the config update
-            model.n_estimators = 10
-            model.max_depth = None
-            model.min_samples_split = 2
-            model.min_samples_leaf = 1
 
             # Mock the open function to avoid actual file writing
             with patch("builtins.open", MagicMock()):
@@ -255,22 +252,17 @@ class TestTraining(unittest.TestCase):
             # Add root_dir attribute which is needed by save_model
             classifier.root_dir = Path(self.test_dir)
 
-            # Create a simple model to save
-            model = RandomForestClassifier(n_estimators=10)
+            # Create a Pipeline model
+            rf_classifier = RandomForestClassifier(n_estimators=10, max_depth=None, min_samples_split=2, min_samples_leaf=1)
+            model = Pipeline(steps=[("preprocessor", StandardScaler()), ("classifier", rf_classifier)])
             model.fit(
                 self.X_train.select_dtypes(include=[np.number]),
                 self.y_train.values.ravel(),
             )
 
-            # Add attributes needed for the config update
-            model.n_estimators = 10
-            model.max_depth = None
-            model.min_samples_split = 2
-            model.min_samples_leaf = 1
-
             # Mock the open function to raise an exception
             with patch("builtins.open", side_effect=Exception("Test exception")):
-                # Save the model - should handle the exception
+                # Save the model
                 result = classifier.save_model(model)
 
                 # Check result

@@ -202,11 +202,12 @@ class PenguinClassifier:
             self.log.info(f"Model saved to {self.model_path}")
 
             # Update config with model path
+            classifier = model.named_steps['classifier']
             self.config["RANDOM_FOREST"] = {
-                "n_estimators": str(model.n_estimators),
-                "max_depth": str(model.max_depth),
-                "min_samples_split": str(model.min_samples_split),
-                "min_samples_leaf": str(model.min_samples_leaf),
+                "n_estimators": str(classifier.n_estimators),
+                "max_depth": str(classifier.max_depth),
+                "min_samples_split": str(classifier.min_samples_split),
+                "min_samples_leaf": str(classifier.min_samples_leaf),
                 "path": os.path.relpath(self.model_path, self.root_dir),
             }
 
