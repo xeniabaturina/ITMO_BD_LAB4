@@ -8,13 +8,12 @@ logger = logging.getLogger(__name__)
 
 
 class SecretsManager:
-    def __init__(self, vault_file_path=None, vault_password=None):
+    def __init__(self, vault_file_path=None):
         """
-        Initialize the SecretsManager with path to the vault file and the vault password.
+        Initialize the SecretsManager with path to the vault file.
 
         Args:
-            vault_file_path: Path to the encrypted Ansible Vault file
-            vault_password: The Ansible Vault password (if provided directly)
+            vault_file_path: Path to the encrypted Ansible Vault file (optional)
         """
         # Default path if not provided
         self.vault_file_path = vault_file_path or os.environ.get(
@@ -24,8 +23,8 @@ class SecretsManager:
         # Validate vault file path
         self._validate_vault_file_path()
 
-        # Get vault password from environment variable or parameter
-        self.vault_password = vault_password or os.environ.get("VAULT_PASSWORD")
+        # Get vault password from environment variable
+        self.vault_password = os.environ.get("VAULT_PASSWORD")
 
         # Ensure we have a vault password
         if not self.vault_password:

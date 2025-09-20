@@ -103,3 +103,4 @@ ansible/vault_password.txt
 *vault_password*
 secrets/
 /tmp
+.env

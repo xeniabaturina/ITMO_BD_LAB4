@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .logger import Logger
 from .database import init_db, get_db, save_prediction, PredictionResult
+from .database_utils import get_db_connection
 
 SHOW_LOG = True
 app = Flask(__name__)
@@ -18,15 +19,6 @@ log = logger.get_logger(__name__)
 
 # Initialize database on first request
 db_initialized = False
-
-
-def get_db_connection():
-    global db_initialized
-    if not db_initialized:
-        init_db()
-        db_initialized = True
-    return next(get_db())
-
 
 @app.teardown_appcontext
 def close_db(e=None):
