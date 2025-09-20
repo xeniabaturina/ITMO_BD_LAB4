@@ -39,80 +39,98 @@ services:
     build: .
     image: penguin-classifier:latest
     container_name: kafka-producer
-    env_file:
-      - .env
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./results:/app/results
       - ./experiments:/app/experiments
       - ./ansible:/app/ansible:ro
+      - shared_volume:/shared
     environment:
       - PYTHONPATH=/app
       - POSTGRES_HOST=postgres
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-      - VAULT_PASSWORD=${VAULT_PASSWORD}
-      - VAULT_FILE_PATH=/app/ansible/secrets.yml
     depends_on:
+      vault-extractor:
+        condition: service_completed_successfully
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    command: python -m src.kafka_producer
+    entrypoint: >
+      sh -c "
+        . /shared/db_credentials.env &&
+        export POSTGRES_USER &&
+        export POSTGRES_PASSWORD &&
+        export POSTGRES_DB &&
+        exec python -m src.kafka_producer
+      "
     restart: unless-stopped
 
   kafka-consumer:
     build: .
     image: penguin-classifier:latest
     container_name: kafka-consumer
-    env_file:
-      - .env
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./results:/app/results
       - ./experiments:/app/experiments
       - ./ansible:/app/ansible:ro
+      - shared_volume:/shared
     environment:
       - PYTHONPATH=/app
       - POSTGRES_HOST=postgres
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-      - VAULT_PASSWORD=${VAULT_PASSWORD}
-      - VAULT_FILE_PATH=/app/ansible/secrets.yml
     depends_on:
+      vault-extractor:
+        condition: service_completed_successfully
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    command: python -m src.kafka_consumer
+    entrypoint: >
+      sh -c "
+        . /shared/db_credentials.env &&
+        export POSTGRES_USER &&
+        export POSTGRES_PASSWORD &&
+        export POSTGRES_DB &&
+        exec python -m src.kafka_consumer
+      "
     restart: unless-stopped
 
   penguin-classifier:
     build: .
     image: penguin-classifier:latest
     container_name: penguin-classifier
-    env_file:
-      - .env
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./results:/app/results
       - ./experiments:/app/experiments
       - ./ansible:/app/ansible:ro
+      - shared_volume:/shared
     ports:
       - "5001:5000"
     environment:
       - PYTHONPATH=/app
       - POSTGRES_HOST=postgres
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-      - VAULT_PASSWORD=${VAULT_PASSWORD}
-      - VAULT_FILE_PATH=/app/ansible/secrets.yml
     depends_on:
+      vault-extractor:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    command: python -m src.api
+    entrypoint: >
+      sh -c "
+        . /shared/db_credentials.env &&
+        export POSTGRES_USER &&
+        export POSTGRES_PASSWORD &&
+        export POSTGRES_DB &&
+        exec python -m src.api
+      "
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
@@ -120,14 +138,38 @@ services:
       timeout: 10s
       retries: 3
 
+  # Vault credentials extractor
+  vault-extractor:
+    build: .
+    image: penguin-classifier:latest
+    container_name: vault-extractor
+    volumes:
+      - ./ansible:/app/ansible:ro
+      - shared_volume:/shared
+    environment:
+      - VAULT_PASSWORD=${VAULT_PASSWORD}
+      - VAULT_FILE_PATH=/app/ansible/secrets.yml
+    command: python3 /app/extract_credentials.py
+    restart: "no"
+
   postgres:
     image: postgres:15
     container_name: penguin-classifier-db
-    env_file:
-      - .env
+    depends_on:
+      vault-extractor:
+        condition: service_completed_successfully
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql
+      - shared_volume:/shared
+    entrypoint: >
+      sh -c "
+        . /shared/db_credentials.env &&
+        export POSTGRES_USER &&
+        export POSTGRES_PASSWORD &&
+        export POSTGRES_DB &&
+        exec docker-entrypoint.sh postgres
+      "
     ports:
       - "5432:5432"
     restart: unless-stopped
@@ -139,3 +181,4 @@ services:
 
 volumes:
   postgres_data:
+  shared_volume:

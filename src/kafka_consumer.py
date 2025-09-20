@@ -14,7 +14,7 @@ from kafka.errors import KafkaError
 
 from .logger import Logger
 from .database import init_db, get_db, PredictionResult
-from .secrets_manager import get_secrets_manager
+from .database_utils import get_db_connection
 
 SHOW_LOG = True
 logger = Logger(SHOW_LOG)
@@ -262,15 +262,6 @@ class KafkaConsumerService:
             self.consumer.close()
             log.info("Kafka consumer closed")
 
-
-def get_db_connection():
-    """Get database connection."""
-    try:
-        init_db()
-        return next(get_db())
-    except Exception as e:
-        log.error(f"Error getting database connection: {e}")
-        return None
 
 
 def main():
