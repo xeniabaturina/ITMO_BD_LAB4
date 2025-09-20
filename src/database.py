@@ -20,14 +20,23 @@ DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
 DB_PORT = os.getenv("POSTGRES_PORT", "5432")
 DB_SCHEMA = os.getenv("POSTGRES_SCHEMA", "public")
 
-# Validate credentials
-if not all([DB_USER, DB_PASS, DB_NAME]):
-    raise ValueError("Missing required database credentials.")
+# Create database URL with encoded password (lazy)
+DATABASE_URL = None
 
-# Create database URL with encoded password
-import urllib.parse
-encoded_password = urllib.parse.quote_plus(DB_PASS)
-DATABASE_URL = f"postgresql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+def _get_database_url():
+    """Get database URL, creating it if needed"""
+    global DATABASE_URL
+    if DATABASE_URL is None:
+        # Validate credentials
+        if not all([DB_USER, DB_PASS, DB_NAME]):
+            raise ValueError("Missing required database credentials.")
+        
+        # Create database URL with encoded password
+        import urllib.parse
+        encoded_password = urllib.parse.quote_plus(DB_PASS)
+        DATABASE_URL = f"postgresql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    
+    return DATABASE_URL
 
 # Create SQLAlchemy engine and session factory
 engine = None
@@ -65,7 +74,8 @@ def init_db():
         engine = create_engine("sqlite:///:memory:")
     else:
         # Use PostgreSQL for production
-        engine = create_engine(DATABASE_URL)
+        database_url = _get_database_url()
+        engine = create_engine(database_url)
 
         # Set the schema for PostgreSQL
         @event.listens_for(engine, "connect")
