@@ -189,9 +189,7 @@ jobs:
         echo "Logging in to DockerHub..."
         docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
         
-        # List repositories on DockerHub
-        echo "Available repositories on DockerHub for ${{ secrets.DOCKERHUB_USERNAME }}:"
-        curl -s -H "Authorization: JWT ${{ secrets.DOCKERHUB_TOKEN }}" "https://hub.docker.com/v2/repositories/${{ secrets.DOCKERHUB_USERNAME }}/" | jq -r '.results[].name'
+        echo "Repository: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier"
         
         # Try to pull the image with explicit tag
         echo "Attempting to pull Docker image: ${{ secrets.DOCKERHUB_USERNAME }}/penguin-classifier:${{ needs.prepare-deployment.outputs.image_tag }}"
